@@ -87,6 +87,8 @@ println("${vote.rating} from ${vote.voteCount} votes")
 
 ## API Overview
 
+Returned model fields are listed in [docs/fields.md](docs/fields.md).
+
 ```kotlin
 getAnimeList(page, filter)
 searchAnime(query, page)
