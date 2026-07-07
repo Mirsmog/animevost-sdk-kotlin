@@ -2,6 +2,7 @@ package com.animevost.sdk
 
 import com.animevost.sdk.config.AnimeVostConfig
 import com.animevost.sdk.http.AnimeVostHttpClient
+import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.Weekday
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -67,6 +68,22 @@ class AnimeVostClientTest {
         client.getAnimeList(page = 2)
 
         assertEquals(listOf("https://example.test/animevost/page/2/"), httpClient.requestedUrls)
+    }
+
+    @Test
+    fun `getAnimeList fetches catalog filter page`() = runBlocking {
+        val httpClient = FakeHttpClient(response = animeListHtml())
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        client.getAnimeList(
+            page = 2,
+            filter = CatalogFilter(path = "tip/tv/"),
+        )
+
+        assertEquals(listOf("https://example.test/animevost/tip/tv/page/2/"), httpClient.requestedUrls)
     }
 
     @Test
@@ -171,6 +188,44 @@ class AnimeVostClientTest {
         assertFailsWith<IllegalArgumentException> {
             client.searchAnime("bleach", page = 0)
         }
+    }
+
+    @Test
+    fun `getNavigation fetches base page and parses menu`() = runBlocking {
+        val httpClient = FakeHttpClient(
+            response = """
+                <html>
+                  <body>
+                    <div class="menu">
+                      <ul id="topnav">
+                        <li><a href="/zhanr/">Жанр</a>
+                          <div class="sar"><a href="/zhanr/romantika/">Романтика</a></div>
+                        </li>
+                        <li><a href="/tip/">Категории</a>
+                          <span class="sar"><a href="/tip/tv/">ТВ</a></span>
+                        </li>
+                        <li><a href="/god/">Год</a>
+                          <span class="sar"><a href="/god/2026/">2026</a></span>
+                        </li>
+                        <li><a href="/ongoing/">Онгоинги</a></li>
+                      </ul>
+                    </div>
+                  </body>
+                </html>
+            """.trimIndent(),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val navigation = client.getNavigation()
+
+        assertEquals(listOf("https://example.test/animevost/"), httpClient.requestedUrls)
+        assertEquals("Романтика", navigation.genres.single().title)
+        assertEquals("ТВ", navigation.types.single().title)
+        assertEquals("2026", navigation.years.single().title)
+        assertEquals("Онгоинги", navigation.sections.single().title)
     }
 
     private fun animeListHtml(): String =

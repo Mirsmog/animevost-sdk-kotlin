@@ -5,10 +5,13 @@ import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.http.OkHttpAnimeVostHttpClient
 import com.animevost.sdk.model.AnimeDetails
 import com.animevost.sdk.model.AnimePage
+import com.animevost.sdk.model.CatalogFilter
+import com.animevost.sdk.model.NavigationData
 import com.animevost.sdk.model.ScheduleDay
 import com.animevost.sdk.model.VideoSource
 import com.animevost.sdk.parser.AnimeDetailsParser
 import com.animevost.sdk.parser.AnimeListParser
+import com.animevost.sdk.parser.NavigationParser
 import com.animevost.sdk.parser.ScheduleParser
 import com.animevost.sdk.parser.VideoSourceParser
 import java.net.URI
@@ -22,6 +25,7 @@ class AnimeVostClient(
     private val animeListParser: AnimeListParser = AnimeListParser(),
     private val animeDetailsParser: AnimeDetailsParser = AnimeDetailsParser(),
     private val videoSourceParser: VideoSourceParser = VideoSourceParser(),
+    private val navigationParser: NavigationParser = NavigationParser(),
 ) {
     suspend fun getSchedule(): List<ScheduleDay> {
         val html = httpClient.get(
@@ -31,15 +35,28 @@ class AnimeVostClient(
         return scheduleParser.parse(html, normalizedBaseUrl())
     }
 
-    suspend fun getAnimeList(page: Int = 1): AnimePage {
+    suspend fun getAnimeList(
+        page: Int = 1,
+        filter: CatalogFilter = CatalogFilter(),
+    ): AnimePage {
         require(page >= 1) { "page must be greater than zero" }
 
         val baseUrl = normalizedBaseUrl()
+        val catalogUrl = catalogUrl(baseUrl, filter)
         val html = httpClient.get(
-            url = if (page == 1) baseUrl else "${baseUrl}page/$page/",
+            url = if (page == 1) catalogUrl else "${catalogUrl}page/$page/",
             headers = requestHeaders(),
         )
         return animeListParser.parse(html, baseUrl)
+    }
+
+    suspend fun getNavigation(): NavigationData {
+        val baseUrl = normalizedBaseUrl()
+        val html = httpClient.get(
+            url = baseUrl,
+            headers = requestHeaders(),
+        )
+        return navigationParser.parse(html, baseUrl)
     }
 
     suspend fun searchAnime(query: String, page: Int = 1): AnimePage {
@@ -97,6 +114,15 @@ class AnimeVostClient(
 
     private fun normalizedBaseUrl(): String =
         config.baseUrl.trim().trimEnd('/') + "/"
+
+    private fun catalogUrl(baseUrl: String, filter: CatalogFilter): String {
+        val path = filter.path
+            ?.trim()
+            ?.trimStart('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: return baseUrl
+        return URI(baseUrl).resolve(path).toString().trimEnd('/') + "/"
+    }
 
     private fun requestHeaders(): Map<String, String> =
         mapOf("User-Agent" to config.userAgent)
