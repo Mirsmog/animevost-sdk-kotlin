@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 
 class AnimeVostClientTest {
 
@@ -226,6 +227,30 @@ class AnimeVostClientTest {
         assertEquals("ТВ", navigation.types.single().title)
         assertEquals("2026", navigation.years.single().title)
         assertEquals("Онгоинги", navigation.sections.single().title)
+    }
+
+    @Test
+    fun `getRandomAnime fetches random endpoint and parses preview`() = runBlocking {
+        val httpClient = FakeHttpClient(
+            response = """
+                <div class="imgOngoing">
+                  <div class="imgOngoingVie">Просмотров: 827381&nbsp;|&nbsp; Комментарий: 104</div>
+                  <a href="/tip/tv/1171-test.html"><span>Плач Асуры / Asura Cryin</span></a>
+                  <img src="/uploads/posts/2014-12/1419617554_1.jpg" />
+                </div>
+            """.trimIndent(),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val anime = client.getRandomAnime()
+
+        assertEquals(listOf("https://example.test/animevost/get_random_post.php"), httpClient.requestedUrls)
+        assertNotNull(anime)
+        assertEquals(1171, anime.id)
+        assertEquals("Плач Асуры", anime.title)
     }
 
     private fun animeListHtml(): String =

@@ -5,6 +5,7 @@ import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.http.OkHttpAnimeVostHttpClient
 import com.animevost.sdk.model.AnimeDetails
 import com.animevost.sdk.model.AnimePage
+import com.animevost.sdk.model.AnimePreview
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.NavigationData
 import com.animevost.sdk.model.ScheduleDay
@@ -12,6 +13,7 @@ import com.animevost.sdk.model.VideoSource
 import com.animevost.sdk.parser.AnimeDetailsParser
 import com.animevost.sdk.parser.AnimeListParser
 import com.animevost.sdk.parser.NavigationParser
+import com.animevost.sdk.parser.RandomAnimeParser
 import com.animevost.sdk.parser.ScheduleParser
 import com.animevost.sdk.parser.VideoSourceParser
 import java.net.URI
@@ -26,6 +28,7 @@ class AnimeVostClient(
     private val animeDetailsParser: AnimeDetailsParser = AnimeDetailsParser(),
     private val videoSourceParser: VideoSourceParser = VideoSourceParser(),
     private val navigationParser: NavigationParser = NavigationParser(),
+    private val randomAnimeParser: RandomAnimeParser = RandomAnimeParser(),
 ) {
     suspend fun getSchedule(): List<ScheduleDay> {
         val html = httpClient.get(
@@ -57,6 +60,15 @@ class AnimeVostClient(
             headers = requestHeaders(),
         )
         return navigationParser.parse(html, baseUrl)
+    }
+
+    suspend fun getRandomAnime(): AnimePreview? {
+        val baseUrl = normalizedBaseUrl()
+        val html = httpClient.get(
+            url = URI(baseUrl).resolve("get_random_post.php").toString(),
+            headers = requestHeaders(),
+        )
+        return randomAnimeParser.parse(html, baseUrl)
     }
 
     suspend fun searchAnime(query: String, page: Int = 1): AnimePage {
