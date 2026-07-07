@@ -9,6 +9,8 @@ import com.animevost.sdk.model.AnimeDetails
 import com.animevost.sdk.model.AnimePage
 import com.animevost.sdk.model.AnimePreview
 import com.animevost.sdk.model.AuthSession
+import com.animevost.sdk.model.CommentPage
+import com.animevost.sdk.model.CommentSubmissionResult
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.FavoriteActionResult
 import com.animevost.sdk.model.NavigationData
@@ -22,12 +24,14 @@ import com.animevost.sdk.model.UserProfileUpdate
 import com.animevost.sdk.model.VideoSource
 import com.animevost.sdk.parser.AnimeDetailsParser
 import com.animevost.sdk.parser.AnimeListParser
+import com.animevost.sdk.parser.CommentsParser
 import com.animevost.sdk.parser.FavoritesParser
 import com.animevost.sdk.parser.NavigationParser
 import com.animevost.sdk.parser.RandomAnimeParser
 import com.animevost.sdk.parser.ScheduleParser
 import com.animevost.sdk.parser.UserProfileParser
 import com.animevost.sdk.parser.VideoSourceParser
+import com.google.gson.JsonParser
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -43,6 +47,7 @@ class AnimeVostClient(
     private val randomAnimeParser: RandomAnimeParser = RandomAnimeParser(),
     private val userProfileParser: UserProfileParser = UserProfileParser(),
     private val favoritesParser: FavoritesParser = FavoritesParser(),
+    private val commentsParser: CommentsParser = CommentsParser(),
 ) {
     private var currentUsername: String? = null
 
@@ -210,6 +215,91 @@ class AnimeVostClient(
     suspend fun removeFavorite(newsId: Int): FavoriteActionResult =
         updateFavorite(newsId = newsId, action = "del", isFavorite = false)
 
+    suspend fun getComments(animeUrl: String, page: Int = 1): CommentPage {
+        require(animeUrl.isNotBlank()) { "animeUrl must not be blank" }
+        require(page >= 1) { "page must be greater than zero" }
+
+        val baseUrl = normalizedBaseUrl()
+        val requestUrl = URI(baseUrl).resolve(animeUrl.trim()).toString()
+        if (page > 1) {
+            val newsId = extractNewsId(requestUrl)
+                ?: throw IllegalArgumentException("animeUrl must contain news id")
+            return getComments(newsId = newsId, page = page)
+        }
+
+        val html = httpClient.get(
+            url = requestUrl,
+            headers = requestHeaders(),
+        )
+        return commentsParser.parsePage(
+            html = html,
+            pageUrl = requestUrl,
+            baseUrl = baseUrl,
+        )
+    }
+
+    suspend fun getComments(newsId: Int, page: Int = 1): CommentPage {
+        require(newsId > 0) { "newsId must be greater than zero" }
+        require(page >= 1) { "page must be greater than zero" }
+
+        val baseUrl = normalizedBaseUrl()
+        val response = httpClient.get(
+            url = commentsAjaxUrl(baseUrl, newsId, page),
+            headers = ajaxHeaders(),
+        )
+        return commentsParser.parseComments(
+            html = extractAjaxCommentsHtml(response),
+            newsId = newsId,
+            currentPage = page,
+            baseUrl = baseUrl,
+        )
+    }
+
+    suspend fun addComment(
+        newsId: Int,
+        text: String,
+        authorName: String? = currentUsername,
+    ): CommentSubmissionResult {
+        requireAuthenticated()
+        require(newsId > 0) { "newsId must be greater than zero" }
+        val commentText = text.trim()
+        require(commentText.isNotBlank()) { "text must not be blank" }
+        val name = authorName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("authorName must not be blank")
+
+        val baseUrl = normalizedBaseUrl()
+        val response = httpClient.post(
+            url = URI(baseUrl).resolve("engine/ajax/addcomments.php").toString(),
+            form = mapOf(
+                "post_id" to newsId.toString(),
+                "comments" to commentText,
+                "name" to name,
+                "mail" to "",
+                "editor_mode" to "",
+                "skin" to DLE_SKIN,
+                "sec_code" to "",
+                "question_answer" to "",
+                "recaptcha_response_field" to "",
+                "recaptcha_challenge_field" to "",
+                "allow_subscribe" to "0",
+            ),
+            headers = ajaxHeaders(),
+        )
+        val comments = commentsParser.parseComments(
+            html = extractAjaxCommentsHtml(response),
+            newsId = newsId,
+            baseUrl = baseUrl,
+        ).comments
+
+        return CommentSubmissionResult(
+            newsId = newsId,
+            comments = comments,
+            rawMessage = response.trim().takeIf { comments.isEmpty() && it.isNotBlank() },
+        )
+    }
+
     suspend fun getSchedule(): List<ScheduleDay> {
         val html = httpClient.get(
             url = normalizedBaseUrl(),
@@ -324,6 +414,9 @@ class AnimeVostClient(
     private fun requestHeaders(): Map<String, String> =
         mapOf("User-Agent" to config.userAgent)
 
+    private fun ajaxHeaders(): Map<String, String> =
+        requestHeaders() + mapOf("X-Requested-With" to "XMLHttpRequest")
+
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8)
 
@@ -348,6 +441,27 @@ class AnimeVostClient(
             throw AnimeVostAuthException("Authentication required")
         }
     }
+
+    private fun commentsAjaxUrl(baseUrl: String, newsId: Int, page: Int): String =
+        URI(baseUrl)
+            .resolve("engine/ajax/comments.php?cstart=$page&news_id=$newsId&skin=$DLE_SKIN&massact=disable")
+            .toString()
+
+    private fun extractAjaxCommentsHtml(response: String): String {
+        val trimmed = response.trim()
+        if (!trimmed.startsWith("{")) return response
+
+        return runCatching {
+            JsonParser.parseString(trimmed)
+                .asJsonObject
+                .get("comments")
+                ?.asString
+                .orEmpty()
+        }.getOrDefault(response)
+    }
+
+    private fun extractNewsId(value: String): Int? =
+        newsIdRegex.find(value)?.groupValues?.get(1)?.toIntOrNull()
 
     private suspend fun updateFavorite(
         newsId: Int,
@@ -383,5 +497,7 @@ class AnimeVostClient(
 
     private companion object {
         const val SEARCH_PAGE_SIZE = 10
+        const val DLE_SKIN = "AnimeVostNext5"
+        val newsIdRegex = Regex("""/(\d+)-[^/]+\.html(?:[#?].*)?$""")
     }
 }
