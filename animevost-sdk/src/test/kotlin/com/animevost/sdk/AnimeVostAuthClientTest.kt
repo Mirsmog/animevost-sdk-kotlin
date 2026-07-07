@@ -5,6 +5,7 @@ import com.animevost.sdk.error.AnimeVostAuthException
 import com.animevost.sdk.error.AnimeVostRegistrationException
 import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.model.RegistrationRequest
+import com.animevost.sdk.model.RegistrationStatus
 import com.animevost.sdk.model.UserProfileUpdate
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -166,8 +167,60 @@ class AnimeVostAuthClientTest {
             httpClient.postedForms[1],
         )
         assertEquals("new_user", result.username)
+        assertEquals(RegistrationStatus.ACTIVE, result.status)
         assertEquals(77, result.session?.userId)
         assertEquals("new_user", result.session?.username)
+    }
+
+    @Test
+    fun `register reports pending email activation when server requires confirmation`() = runBlocking {
+        val httpClient = FakeAuthHttpClient(
+            response = """
+                <html>
+                  <body>
+                    <h1>Отправлен запрос на активацию</h1>
+                    <p>Запрос на регистрацию принят.</p>
+                    <p>Через 10 минут Вы получите письмо с инструкциями для следующего шага.</p>
+                  </body>
+                </html>
+            """.trimIndent(),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val result = client.register(
+            RegistrationRequest(
+                username = "worker_v2",
+                password = "secret123",
+                email = "worker@example.test",
+            ),
+        )
+
+        assertEquals("worker_v2", result.username)
+        assertEquals(RegistrationStatus.PENDING_EMAIL_ACTIVATION, result.status)
+        assertEquals(null, result.session)
+        assertFalse(client.isLoggedIn())
+    }
+
+    @Test
+    fun `activateRegistration fetches email activation link from mirror`() = runBlocking {
+        val httpClient = FakeAuthHttpClient(response = "<html>Ваш аккаунт активирован</html>")
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://animevost.org/"),
+            httpClient = httpClient,
+        )
+
+        val result = client.activateRegistration(
+            "https://v13.vost.pw/index.php?do=register&doaction=validating&id=fake_token",
+        )
+
+        assertEquals(
+            listOf("https://v13.vost.pw/index.php?do=register&doaction=validating&id=fake_token"),
+            httpClient.requestedUrls,
+        )
+        assertTrue(result.activated)
     }
 
     @Test

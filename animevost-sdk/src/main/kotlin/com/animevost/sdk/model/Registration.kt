@@ -8,5 +8,15 @@ data class RegistrationRequest(
 
 data class RegistrationResult(
     val username: String,
+    val status: RegistrationStatus,
     val session: AuthSession?,
+)
+
+enum class RegistrationStatus {
+    ACTIVE,
+    PENDING_EMAIL_ACTIVATION,
+}
+
+data class RegistrationActivationResult(
+    val activated: Boolean,
 )

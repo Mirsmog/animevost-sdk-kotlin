@@ -11,8 +11,10 @@ import com.animevost.sdk.model.AnimePreview
 import com.animevost.sdk.model.AuthSession
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.NavigationData
+import com.animevost.sdk.model.RegistrationActivationResult
 import com.animevost.sdk.model.RegistrationRequest
 import com.animevost.sdk.model.RegistrationResult
+import com.animevost.sdk.model.RegistrationStatus
 import com.animevost.sdk.model.ScheduleDay
 import com.animevost.sdk.model.UserProfile
 import com.animevost.sdk.model.UserProfileUpdate
@@ -122,7 +124,27 @@ class AnimeVostClient(
         }
         return RegistrationResult(
             username = username,
+            status = if (session != null) {
+                RegistrationStatus.ACTIVE
+            } else {
+                RegistrationStatus.PENDING_EMAIL_ACTIVATION
+            },
             session = session,
+        )
+    }
+
+    suspend fun activateRegistration(activationUrl: String): RegistrationActivationResult {
+        require(activationUrl.isNotBlank()) { "activationUrl must not be blank" }
+
+        val response = httpClient.get(
+            url = URI(normalizedBaseUrl()).resolve(activationUrl.trim()).toString(),
+            headers = requestHeaders(),
+        )
+        if (response.hasRegistrationError()) {
+            throw AnimeVostRegistrationException("Registration activation failed")
+        }
+        return RegistrationActivationResult(
+            activated = response.hasActivationSuccess(),
         )
     }
 
@@ -306,6 +328,10 @@ class AnimeVostClient(
         contains("Ошибка") ||
             contains("berrors") ||
             contains("уже используется", ignoreCase = true)
+
+    private fun String.hasActivationSuccess(): Boolean =
+        contains("активирован", ignoreCase = true) ||
+            contains("активация", ignoreCase = true)
 
     private companion object {
         const val SEARCH_PAGE_SIZE = 10
