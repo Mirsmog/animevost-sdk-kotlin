@@ -5,6 +5,7 @@ import com.animevost.sdk.error.AnimeVostNetworkException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -35,6 +36,27 @@ class OkHttpAnimeVostHttpClient(
         withContext(Dispatchers.IO) {
             val body = FormBody.Builder()
                 .apply { form.forEach { (name, value) -> add(name, value) } }
+                .build()
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .apply {
+                    headers.forEach { (name, value) -> header(name, value) }
+                }
+                .build()
+
+            execute(request)
+        }
+
+    override suspend fun postMultipart(
+        url: String,
+        form: Map<String, String>,
+        headers: Map<String, String>,
+    ): String =
+        withContext(Dispatchers.IO) {
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .apply { form.forEach { (name, value) -> addFormDataPart(name, value) } }
                 .build()
             val request = Request.Builder()
                 .url(url)

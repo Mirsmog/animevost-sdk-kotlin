@@ -13,3 +13,10 @@ data class UserProfile(
     val canEdit: Boolean
         get() = userId != null && !allowHash.isNullOrBlank()
 }
+
+data class UserProfileUpdate(
+    val fullName: String? = null,
+    val location: String? = null,
+    val email: String? = null,
+    val info: String? = null,
+)

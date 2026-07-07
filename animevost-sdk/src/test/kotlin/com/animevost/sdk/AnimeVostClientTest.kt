@@ -310,6 +310,12 @@ class AnimeVostClientTest {
             return response
         }
 
+        override suspend fun postMultipart(
+            url: String,
+            form: Map<String, String>,
+            headers: Map<String, String>,
+        ): String = response
+
         override fun getCookie(name: String): String? = null
 
         override fun clearCookies() = Unit

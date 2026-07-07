@@ -9,6 +9,12 @@ interface AnimeVostHttpClient {
         headers: Map<String, String> = emptyMap(),
     ): String
 
+    suspend fun postMultipart(
+        url: String,
+        form: Map<String, String>,
+        headers: Map<String, String> = emptyMap(),
+    ): String
+
     fun getCookie(name: String): String?
 
     fun clearCookies()

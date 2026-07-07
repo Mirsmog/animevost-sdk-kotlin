@@ -5,6 +5,7 @@ import com.animevost.sdk.error.AnimeVostAuthException
 import com.animevost.sdk.error.AnimeVostRegistrationException
 import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.model.RegistrationRequest
+import com.animevost.sdk.model.UserProfileUpdate
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -186,6 +187,68 @@ class AnimeVostAuthClientTest {
         }
     }
 
+    @Test
+    fun `updateProfile fetches current form and posts merged fields`() = runBlocking {
+        val httpClient = FakeAuthHttpClient(
+            response = """
+                <html>
+                  <body>
+                    <form id="userinfo">
+                      <input name="id" value="42" />
+                      <input name="dle_allow_hash" value="hash_value" />
+                      <input name="fullname" value="Old Name" />
+                      <input name="land" value="Old Land" />
+                      <input name="email" value="old@example.test" />
+                      <textarea name="info">old info</textarea>
+                    </form>
+                  </body>
+                </html>
+            """.trimIndent(),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val profile = client.updateProfile(
+            username = "test_user",
+            update = UserProfileUpdate(
+                fullName = "New Name",
+                email = "new@example.test",
+            ),
+        )
+
+        assertEquals(listOf("https://example.test/animevost/user/test_user/"), httpClient.requestedUrls)
+        assertEquals(listOf("https://example.test/animevost/user/test_user/"), httpClient.multipartUrls)
+        assertEquals(
+            mapOf(
+                "doaction" to "adduserinfo",
+                "id" to "42",
+                "dle_allow_hash" to "hash_value",
+                "fullname" to "New Name",
+                "land" to "Old Land",
+                "email" to "new@example.test",
+                "info" to "old info",
+            ),
+            httpClient.multipartForms.single(),
+        )
+        assertEquals("test_user", profile.username)
+    }
+
+    @Test
+    fun `updateProfile rejects profile without edit hash`() = runBlocking {
+        val client = AnimeVostClient(
+            httpClient = FakeAuthHttpClient(response = "<html><body></body></html>"),
+        )
+
+        assertFailsWith<AnimeVostAuthException> {
+            client.updateProfile(
+                username = "test_user",
+                update = UserProfileUpdate(fullName = "New Name"),
+            )
+        }
+    }
+
     private class FakeAuthHttpClient(
         private val response: String,
         initialCookies: Map<String, String> = emptyMap(),
@@ -194,6 +257,8 @@ class AnimeVostAuthClientTest {
         val requestedUrls = mutableListOf<String>()
         val postedUrls = mutableListOf<String>()
         val postedForms = mutableListOf<Map<String, String>>()
+        val multipartUrls = mutableListOf<String>()
+        val multipartForms = mutableListOf<Map<String, String>>()
         var cookiesCleared = false
         private val cookies = initialCookies.toMutableMap()
 
@@ -210,6 +275,16 @@ class AnimeVostAuthClientTest {
             postedUrls += url
             postedForms += form
             cookies += cookiesAfterPost
+            return response
+        }
+
+        override suspend fun postMultipart(
+            url: String,
+            form: Map<String, String>,
+            headers: Map<String, String>,
+        ): String {
+            multipartUrls += url
+            multipartForms += form
             return response
         }
 

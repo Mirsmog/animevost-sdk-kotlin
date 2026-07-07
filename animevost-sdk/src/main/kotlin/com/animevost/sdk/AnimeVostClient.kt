@@ -15,6 +15,7 @@ import com.animevost.sdk.model.RegistrationRequest
 import com.animevost.sdk.model.RegistrationResult
 import com.animevost.sdk.model.ScheduleDay
 import com.animevost.sdk.model.UserProfile
+import com.animevost.sdk.model.UserProfileUpdate
 import com.animevost.sdk.model.VideoSource
 import com.animevost.sdk.parser.AnimeDetailsParser
 import com.animevost.sdk.parser.AnimeListParser
@@ -131,15 +132,38 @@ class AnimeVostClient(
             ?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("username must not be blank")
 
-        val baseUrl = normalizedBaseUrl()
-        val profileUrl = URI(baseUrl)
-            .resolve("user/${encodePathSegment(profileUsername)}/")
-            .toString()
+        val profileUrl = profileUrl(profileUsername)
         val html = httpClient.get(
             url = profileUrl,
             headers = requestHeaders(),
         )
         return userProfileParser.parse(html, profileUrl)
+    }
+
+    suspend fun updateProfile(
+        username: String? = currentUsername,
+        update: UserProfileUpdate,
+    ): UserProfile {
+        val current = getProfile(username)
+        if (!current.canEdit) {
+            throw AnimeVostAuthException("Profile is not editable")
+        }
+
+        val profileUrl = profileUrl(current.username)
+        val response = httpClient.postMultipart(
+            url = profileUrl,
+            form = mapOf(
+                "doaction" to "adduserinfo",
+                "id" to current.userId.toString(),
+                "dle_allow_hash" to current.allowHash.orEmpty(),
+                "fullname" to (update.fullName ?: current.fullName).orEmpty(),
+                "land" to (update.location ?: current.location).orEmpty(),
+                "email" to (update.email ?: current.email).orEmpty(),
+                "info" to (update.info ?: current.info).orEmpty(),
+            ),
+            headers = requestHeaders(),
+        )
+        return userProfileParser.parse(response, profileUrl)
     }
 
     suspend fun getSchedule(): List<ScheduleDay> {
@@ -247,6 +271,11 @@ class AnimeVostClient(
             ?: return baseUrl
         return URI(baseUrl).resolve(path).toString().trimEnd('/') + "/"
     }
+
+    private fun profileUrl(username: String): String =
+        URI(normalizedBaseUrl())
+            .resolve("user/${encodePathSegment(username)}/")
+            .toString()
 
     private fun requestHeaders(): Map<String, String> =
         mapOf("User-Agent" to config.userAgent)
