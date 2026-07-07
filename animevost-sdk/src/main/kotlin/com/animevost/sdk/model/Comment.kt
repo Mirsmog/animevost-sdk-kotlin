@@ -2,6 +2,7 @@ package com.animevost.sdk.model
 
 data class CommentPage(
     val newsId: Int?,
+    val allowHash: String?,
     val comments: List<AnimeComment>,
     val currentPage: Int,
     val totalPages: Int?,
@@ -21,7 +22,15 @@ data class AnimeComment(
     val indentLevel: Int?,
     val depth: Int,
     val isOnline: Boolean?,
+    val actions: Set<CommentAction>,
 )
+
+enum class CommentAction {
+    REPLY,
+    REPORT,
+    DELETE,
+    EDIT,
+}
 
 data class CommentAuthor(
     val name: String,
@@ -39,4 +48,15 @@ data class CommentSubmissionResult(
     val newsId: Int,
     val comments: List<AnimeComment>,
     val rawMessage: String?,
+)
+
+data class CommentActionResult(
+    val commentId: Int,
+    val success: Boolean,
+    val message: String?,
+)
+
+data class CommentReplyTemplate(
+    val commentId: Int,
+    val markup: String,
 )

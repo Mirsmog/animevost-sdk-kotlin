@@ -21,3 +21,20 @@ class AnimeVostAuthException(
 class AnimeVostRegistrationException(
     message: String,
 ) : AnimeVostException(message)
+
+class AnimeVostValidationException(
+    message: String,
+) : AnimeVostException(message)
+
+open class AnimeVostServerException(
+    message: String,
+    val serverMessage: String = message,
+) : AnimeVostException(message)
+
+class AnimeVostCaptchaException(
+    message: String,
+) : AnimeVostServerException(message)
+
+class AnimeVostRateLimitException(
+    message: String,
+) : AnimeVostServerException(message)

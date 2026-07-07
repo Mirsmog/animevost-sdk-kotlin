@@ -1,6 +1,7 @@
 package com.animevost.sdk.parser
 
 import com.animevost.sdk.model.AnimeComment
+import com.animevost.sdk.model.CommentAction
 import com.animevost.sdk.model.CommentAuthor
 import com.animevost.sdk.model.CommentPage
 import com.animevost.sdk.model.CommentQuote
@@ -20,6 +21,7 @@ class CommentsParser {
         return parseDocument(
             root = doc,
             newsId = parseScriptInt(html, "dle_news_id") ?: extractNewsId(pageUrl.orEmpty()),
+            allowHash = parseScriptString(html, "dle_login_hash"),
             currentPage = parseScriptInt(html, "current_comments_page") ?: 1,
             totalPages = parseScriptInt(html, "total_comments_pages"),
         )
@@ -30,12 +32,14 @@ class CommentsParser {
         newsId: Int? = null,
         currentPage: Int = 1,
         totalPages: Int? = null,
+        allowHash: String? = null,
         baseUrl: String = "https://animevost.org/",
     ): CommentPage {
         val doc = Jsoup.parse(html, normalizeBaseUrl(baseUrl))
         return parseDocument(
             root = doc,
             newsId = newsId,
+            allowHash = allowHash ?: parseScriptString(html, "dle_login_hash"),
             currentPage = currentPage,
             totalPages = totalPages,
         )
@@ -44,6 +48,7 @@ class CommentsParser {
     private fun parseDocument(
         root: Element,
         newsId: Int?,
+        allowHash: String?,
         currentPage: Int,
         totalPages: Int?,
     ): CommentPage {
@@ -53,6 +58,7 @@ class CommentsParser {
 
         return CommentPage(
             newsId = newsId,
+            allowHash = allowHash?.takeIf { it.isNotBlank() },
             comments = comments,
             currentPage = currentPage,
             totalPages = totalPages,
@@ -100,6 +106,7 @@ class CommentsParser {
             indentLevel = parseIndentLevel(content),
             depth = 0,
             isOnline = parseOnlineStatus(content),
+            actions = parseActions(content),
         )
     }
 
@@ -225,12 +232,30 @@ class CommentsParser {
         }
     }
 
+    private fun parseActions(element: Element): Set<CommentAction> {
+        val actionsHtml = element.selectFirst(".commentFinalIt")?.html().orEmpty()
+        return buildSet {
+            if (actionsHtml.contains("dle_ins(")) add(CommentAction.REPLY)
+            if (actionsHtml.contains("AddComplaint(")) add(CommentAction.REPORT)
+            if (actionsHtml.contains("DeleteComments(")) add(CommentAction.DELETE)
+            if (actionsHtml.contains("ajax_comm_edit(")) add(CommentAction.EDIT)
+        }
+    }
+
     private fun parseScriptInt(html: String, variableName: String): Int? =
         Regex("""var\s+${Regex.escape(variableName)}\s*=\s*['"](\d+)['"]""")
             .find(html)
             ?.groupValues
             ?.get(1)
             ?.toIntOrNull()
+
+    private fun parseScriptString(html: String, variableName: String): String? =
+        Regex("""var\s+${Regex.escape(variableName)}\s*=\s*['"]([^'"]*)['"]""")
+            .find(html)
+            ?.groupValues
+            ?.get(1)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
 
     private fun extractNewsId(value: String): Int? =
         newsIdRegex.find(value)?.groupValues?.get(1)?.toIntOrNull()

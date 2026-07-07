@@ -1,5 +1,6 @@
 package com.animevost.sdk.parser
 
+import com.animevost.sdk.model.CommentAction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -14,6 +15,7 @@ class CommentsParserTest {
         val page = parser.parsePage(commentsPageHtml())
 
         assertEquals(3970, page.newsId)
+        assertEquals("0123456789abcdef0123456789abcdef", page.allowHash)
         assertEquals(1, page.currentPage)
         assertEquals(3, page.totalPages)
         assertEquals(listOf(2048934, 2048924), page.comments.map { it.id })
@@ -31,6 +33,7 @@ class CommentsParserTest {
         assertFalse(first.isOnline ?: true)
         assertEquals("Что ж, меня заинтересовало. Буду продолжать смотреть", first.bodyText)
         assertEquals(emptyList(), first.quotes)
+        assertEquals(setOf(CommentAction.REPLY, CommentAction.REPORT), first.actions)
 
         val reply = page.comments.last()
         assertEquals("Gaf", reply.author.name)
@@ -38,6 +41,7 @@ class CommentsParserTest {
         assertEquals(9, reply.indentLevel)
         assertEquals(1, reply.depth)
         assertTrue(reply.isOnline ?: false)
+        assertEquals(setOf(CommentAction.DELETE, CommentAction.EDIT, CommentAction.REPORT), reply.actions)
         assertEquals(
             "Помимо персоны уже были боле мение по луче озвучки так что не надо тут смотреть тайтл в озвучке персоны себя не уважать",
             reply.bodyText,
@@ -102,6 +106,7 @@ class CommentsParserTest {
               <body>
                 <script>
                   var dle_news_id= '3970';
+                  var dle_login_hash = '0123456789abcdef0123456789abcdef';
                   var total_comments_pages= '3';
                   var current_comments_page= '1';
                 </script>
@@ -121,7 +126,8 @@ class CommentsParserTest {
                             <div id='comm-id-2048934'>Что ж, меня заинтересовало. Буду продолжать смотреть</div>
                           </div>
                           <div class="commentFinalIt">
-                            <strong></strong>
+                            <strong><a onmouseover="dle_copy_quote('Deutscher&nbsp;Kater');" href="#" onclick="dle_ins('2048934'); return false;">Ответить</a></strong>
+                            <a href="javascript:AddComplaint('2048934', 'comments')">Жалоба</a>
                             <span style="color: #dd2020; position: absolute; right: 5px; padding-top:5px;">Оффлайн</span>
                           </div>
                         </div>
@@ -143,7 +149,9 @@ class CommentsParserTest {
                             </div>
                           </div>
                           <div class="commentFinalIt">
-                            <strong></strong>
+                            <a href="javascript:ajax_comm_edit('2048924', 'comments')">Изменить</a>
+                            <a href="javascript:AddComplaint('2048924', 'comments')">Жалоба</a>
+                            <a href="javascript:DeleteComments('2048924', '0123456789abcdef0123456789abcdef')">Удалить</a>
                             <span style="color: #7ddd20; position: absolute; right: 5px; padding-top:5px;">Онлайн</span>
                           </div>
                         </div>

@@ -2,6 +2,7 @@ package com.animevost.sdk
 
 import com.animevost.sdk.config.AnimeVostConfig
 import com.animevost.sdk.error.AnimeVostAuthException
+import com.animevost.sdk.error.AnimeVostServerException
 import com.animevost.sdk.http.AnimeVostHttpClient
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -22,6 +23,7 @@ class AnimeVostCommentsClientTest {
 
         assertEquals(listOf("https://example.test/animevost/tip/tv/3970-test.html"), httpClient.requestedUrls)
         assertEquals(3970, page.newsId)
+        assertEquals("0123456789abcdef0123456789abcdef", page.allowHash)
         assertEquals(1, page.currentPage)
         assertEquals(3, page.totalPages)
         assertEquals("worker_v1", page.comments.single().author.name)
@@ -100,12 +102,100 @@ class AnimeVostCommentsClientTest {
         }
     }
 
+    @Test
+    fun `getCommentReplyTemplate fetches DLE quote markup`() = runBlocking {
+        val httpClient = FakeCommentsHttpClient(getResponse = "[quote=worker_v1]text[/quote]")
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val result = client.getCommentReplyTemplate(commentId = 2048934)
+
+        assertEquals(
+            listOf("https://example.test/animevost/engine/ajax/quote.php?id=2048934"),
+            httpClient.requestedUrls,
+        )
+        assertEquals(2048934, result.commentId)
+        assertEquals("[quote=worker_v1]text[/quote]", result.markup)
+    }
+
+    @Test
+    fun `reportComment posts complaint form`() = runBlocking {
+        val httpClient = FakeCommentsHttpClient(
+            postResponse = "ok",
+            cookies = mapOf("dle_user_id" to "42"),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val result = client.reportComment(commentId = 2048934, text = "Нарушение правил")
+
+        assertEquals(
+            listOf("https://example.test/animevost/engine/ajax/complaint.php"),
+            httpClient.postedUrls,
+        )
+        assertEquals(
+            mapOf(
+                "id" to "2048934",
+                "text" to "Нарушение правил",
+                "action" to "comments",
+            ),
+            httpClient.postedForms.single(),
+        )
+        assertEquals(2048934, result.commentId)
+        assertEquals(true, result.success)
+        assertEquals(null, result.message)
+    }
+
+    @Test
+    fun `deleteComment uses remembered allow hash from comments page`() = runBlocking {
+        val httpClient = FakeCommentsHttpClient(
+            getResponse = detailPageHtml(),
+            cookies = mapOf("dle_user_id" to "42"),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        client.getComments("tip/tv/3970-test.html")
+        val result = client.deleteComment(commentId = 2048934)
+
+        assertEquals(
+            listOf(
+                "https://example.test/animevost/tip/tv/3970-test.html",
+                "https://example.test/animevost/engine/ajax/deletecomments.php?id=2048934&dle_allow_hash=0123456789abcdef0123456789abcdef",
+            ),
+            httpClient.requestedUrls,
+        )
+        assertEquals(2048934, result.commentId)
+        assertEquals(true, result.success)
+    }
+
+    @Test
+    fun `comment actions map server rejection to sdk exception`() = runBlocking {
+        val client = AnimeVostClient(
+            httpClient = FakeCommentsHttpClient(
+                postResponse = "Hacking attempt!",
+                cookies = mapOf("dle_user_id" to "42"),
+            ),
+        )
+
+        assertFailsWith<AnimeVostServerException> {
+            client.reportComment(commentId = 2048934, text = "test")
+        }
+    }
+
     private fun detailPageHtml(): String =
         """
             <html>
               <body>
                 <script>
                   var dle_news_id= '3970';
+                  var dle_login_hash = '0123456789abcdef0123456789abcdef';
                   var total_comments_pages= '3';
                   var current_comments_page= '1';
                 </script>
@@ -156,7 +246,11 @@ class AnimeVostCommentsClientTest {
 
         override suspend fun get(url: String, headers: Map<String, String>): String {
             requestedUrls += url
-            return getResponse
+            return if (url.contains("deletecomments.php")) {
+                url.substringAfter("id=").substringBefore("&")
+            } else {
+                getResponse
+            }
         }
 
         override suspend fun post(

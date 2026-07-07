@@ -2,18 +2,25 @@ package com.animevost.sdk
 
 import com.animevost.sdk.config.AnimeVostConfig
 import com.animevost.sdk.error.AnimeVostAuthException
+import com.animevost.sdk.error.AnimeVostCaptchaException
+import com.animevost.sdk.error.AnimeVostRateLimitException
 import com.animevost.sdk.error.AnimeVostRegistrationException
+import com.animevost.sdk.error.AnimeVostServerException
+import com.animevost.sdk.error.AnimeVostValidationException
 import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.http.OkHttpAnimeVostHttpClient
 import com.animevost.sdk.model.AnimeDetails
 import com.animevost.sdk.model.AnimePage
 import com.animevost.sdk.model.AnimePreview
 import com.animevost.sdk.model.AuthSession
+import com.animevost.sdk.model.CommentActionResult
 import com.animevost.sdk.model.CommentPage
+import com.animevost.sdk.model.CommentReplyTemplate
 import com.animevost.sdk.model.CommentSubmissionResult
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.FavoriteActionResult
 import com.animevost.sdk.model.NavigationData
+import com.animevost.sdk.model.RatingVoteResult
 import com.animevost.sdk.model.RegistrationActivationResult
 import com.animevost.sdk.model.RegistrationRequest
 import com.animevost.sdk.model.RegistrationResult
@@ -31,7 +38,9 @@ import com.animevost.sdk.parser.RandomAnimeParser
 import com.animevost.sdk.parser.ScheduleParser
 import com.animevost.sdk.parser.UserProfileParser
 import com.animevost.sdk.parser.VideoSourceParser
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import org.jsoup.Jsoup
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -50,6 +59,7 @@ class AnimeVostClient(
     private val commentsParser: CommentsParser = CommentsParser(),
 ) {
     private var currentUsername: String? = null
+    private var currentLoginHash: String? = null
 
     suspend fun login(username: String, password: String): AuthSession {
         require(username.isNotBlank()) { "username must not be blank" }
@@ -65,8 +75,10 @@ class AnimeVostClient(
             headers = requestHeaders(),
         )
 
+        rememberLoginHash(response)
         if (response.hasAuthError()) {
             httpClient.clearCookies()
+            currentLoginHash = null
             throw AnimeVostAuthException("Invalid username or password")
         }
 
@@ -85,6 +97,7 @@ class AnimeVostClient(
         }
         httpClient.clearCookies()
         currentUsername = null
+        currentLoginHash = null
     }
 
     fun isLoggedIn(): Boolean =
@@ -122,6 +135,7 @@ class AnimeVostClient(
             headers = requestHeaders(),
         )
 
+        rememberLoginHash(response)
         if (response.hasRegistrationError()) {
             throw AnimeVostRegistrationException("Registration failed")
         }
@@ -167,6 +181,7 @@ class AnimeVostClient(
             url = profileUrl,
             headers = requestHeaders(),
         )
+        rememberLoginHash(html)
         return userProfileParser.parse(html, profileUrl)
     }
 
@@ -193,6 +208,7 @@ class AnimeVostClient(
             ),
             headers = requestHeaders(),
         )
+        rememberLoginHash(response)
         return userProfileParser.parse(response, profileUrl)
     }
 
@@ -206,6 +222,7 @@ class AnimeVostClient(
             url = if (page == 1) favoritesUrl else "${favoritesUrl}page/$page/",
             headers = requestHeaders(),
         )
+        rememberLoginHash(html)
         return favoritesParser.parse(html, baseUrl)
     }
 
@@ -231,11 +248,14 @@ class AnimeVostClient(
             url = requestUrl,
             headers = requestHeaders(),
         )
-        return commentsParser.parsePage(
+        rememberLoginHash(html)
+        val pageData = commentsParser.parsePage(
             html = html,
             pageUrl = requestUrl,
             baseUrl = baseUrl,
         )
+        rememberLoginHash(pageData.allowHash)
+        return pageData
     }
 
     suspend fun getComments(newsId: Int, page: Int = 1): CommentPage {
@@ -247,6 +267,7 @@ class AnimeVostClient(
             url = commentsAjaxUrl(baseUrl, newsId, page),
             headers = ajaxHeaders(),
         )
+        validateServerResponse(response)
         return commentsParser.parseComments(
             html = extractAjaxCommentsHtml(response),
             newsId = newsId,
@@ -287,6 +308,7 @@ class AnimeVostClient(
             ),
             headers = ajaxHeaders(),
         )
+        validateServerResponse(response)
         val comments = commentsParser.parseComments(
             html = extractAjaxCommentsHtml(response),
             newsId = newsId,
@@ -297,6 +319,100 @@ class AnimeVostClient(
             newsId = newsId,
             comments = comments,
             rawMessage = response.trim().takeIf { comments.isEmpty() && it.isNotBlank() },
+        )
+    }
+
+    suspend fun getCommentReplyTemplate(commentId: Int): CommentReplyTemplate {
+        require(commentId > 0) { "commentId must be greater than zero" }
+
+        val response = httpClient.get(
+            url = URI(normalizedBaseUrl())
+                .resolve("engine/ajax/quote.php?id=$commentId")
+                .toString(),
+            headers = ajaxHeaders(),
+        )
+        validateServerResponse(response)
+        return CommentReplyTemplate(
+            commentId = commentId,
+            markup = response.trim(),
+        )
+    }
+
+    suspend fun reportComment(commentId: Int, text: String): CommentActionResult {
+        requireAuthenticated()
+        require(commentId > 0) { "commentId must be greater than zero" }
+        val reportText = text.trim()
+        require(reportText.isNotBlank()) { "text must not be blank" }
+
+        val response = httpClient.post(
+            url = URI(normalizedBaseUrl()).resolve("engine/ajax/complaint.php").toString(),
+            form = mapOf(
+                "id" to commentId.toString(),
+                "text" to reportText,
+                "action" to "comments",
+            ),
+            headers = ajaxHeaders(),
+        )
+        validateServerResponse(response)
+        return CommentActionResult(
+            commentId = commentId,
+            success = response.trim().equals("ok", ignoreCase = true),
+            message = response.trim().takeUnless { it.equals("ok", ignoreCase = true) || it.isBlank() },
+        )
+    }
+
+    suspend fun deleteComment(
+        commentId: Int,
+        allowHash: String? = currentLoginHash,
+    ): CommentActionResult {
+        requireAuthenticated()
+        require(commentId > 0) { "commentId must be greater than zero" }
+        val hash = allowHash
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: throw AnimeVostAuthException("DLE allow hash is required")
+
+        val response = httpClient.get(
+            url = URI(normalizedBaseUrl())
+                .resolve("engine/ajax/deletecomments.php?id=$commentId&dle_allow_hash=${encode(hash)}")
+                .toString(),
+            headers = ajaxHeaders(),
+        )
+        validateServerResponse(response)
+        val deletedId = response.trim().toIntOrNull()
+        return CommentActionResult(
+            commentId = commentId,
+            success = deletedId == commentId,
+            message = response.trim().takeIf { deletedId != commentId && it.isNotBlank() },
+        )
+    }
+
+    suspend fun voteAnime(newsId: Int, rating: Int): RatingVoteResult {
+        require(newsId > 0) { "newsId must be greater than zero" }
+        if (rating !in MIN_RATING..MAX_RATING) {
+            throw AnimeVostValidationException("rating must be between $MIN_RATING and $MAX_RATING")
+        }
+
+        val response = httpClient.get(
+            url = URI(normalizedBaseUrl())
+                .resolve("engine/ajax/rating.php?go_rate=$rating&news_id=$newsId&skin=$DLE_SKIN")
+                .toString(),
+            headers = ajaxHeaders(),
+        )
+        validateServerResponse(response)
+        val json = parseJsonObject(response)
+        if (json == null || json.get("success")?.asBoolean != true) {
+            throw AnimeVostServerException(extractJsonError(json) ?: "Rating vote failed")
+        }
+        val ratingHtml = decodeDleHtml(json.get("rating")?.asString.orEmpty())
+            .takeIf { it.isNotBlank() }
+        return RatingVoteResult(
+            newsId = newsId,
+            submittedRating = rating,
+            rating = parseRating(ratingHtml),
+            voteCount = json.get("votenum")?.asString?.toIntOrNull(),
+            ratingHtml = ratingHtml,
+            success = true,
         )
     }
 
@@ -451,17 +567,75 @@ class AnimeVostClient(
         val trimmed = response.trim()
         if (!trimmed.startsWith("{")) return response
 
-        return runCatching {
-            JsonParser.parseString(trimmed)
-                .asJsonObject
-                .get("comments")
-                ?.asString
-                .orEmpty()
-        }.getOrDefault(response)
+        return parseJsonObject(trimmed)
+            ?.get("comments")
+            ?.asString
+            .orEmpty()
+            .ifBlank { response }
     }
 
     private fun extractNewsId(value: String): Int? =
         newsIdRegex.find(value)?.groupValues?.get(1)?.toIntOrNull()
+
+    private fun rememberLoginHash(html: String?) {
+        val value = html?.trim().orEmpty()
+        currentLoginHash = dleLoginHashRegex.find(value)
+            ?.groupValues
+            ?.get(1)
+            ?: value.takeIf { dleLoginHashValueRegex.matches(it) }
+            ?: currentLoginHash
+    }
+
+    private fun validateServerResponse(response: String) {
+        val message = normalizeServerMessage(response)
+        if (message.isBlank()) return
+
+        when {
+            message.equals("ok", ignoreCase = true) -> return
+            message.equals("error", ignoreCase = true) -> throw AnimeVostServerException("Server returned error")
+            message.contains("Hacking attempt", ignoreCase = true) ->
+                throw AnimeVostServerException("Server rejected request as invalid", message)
+            message.contains("captcha", ignoreCase = true) ||
+                message.contains("код безопасности", ignoreCase = true) ->
+                throw AnimeVostCaptchaException(message)
+            message.contains("слишком часто", ignoreCase = true) ||
+                message.contains("повторите попытку", ignoreCase = true) ->
+                throw AnimeVostRateLimitException(message)
+            message.contains("Данный раздел доступен только для зарегистрированных пользователей", ignoreCase = true) ->
+                throw AnimeVostAuthException("Authentication required")
+        }
+    }
+
+    private fun normalizeServerMessage(response: String): String {
+        val trimmed = response.trim()
+        if (trimmed.isBlank()) return ""
+        if (trimmed.startsWith("{") || trimmed.startsWith("<div id='comment-id-") || trimmed.startsWith("<div id=\"comment-id-")) {
+            return ""
+        }
+        return Jsoup.parse(trimmed).text().ifBlank { trimmed }.trim()
+    }
+
+    private fun parseJsonObject(response: String): JsonObject? =
+        runCatching {
+            JsonParser.parseString(response.trim()).asJsonObject
+        }.getOrNull()
+
+    private fun extractJsonError(json: JsonObject?): String? =
+        json?.get("error")?.asString
+            ?: json?.get("message")?.asString
+
+    private fun decodeDleHtml(value: String): String =
+        value.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+
+    private fun parseRating(html: String?): Double? {
+        val percent = html
+            ?.let { ratingWidthRegex.find(it)?.groupValues?.get(1)?.toDoubleOrNull() }
+            ?: return null
+        return percent / 20.0
+    }
 
     private suspend fun updateFavorite(
         newsId: Int,
@@ -498,6 +672,11 @@ class AnimeVostClient(
     private companion object {
         const val SEARCH_PAGE_SIZE = 10
         const val DLE_SKIN = "AnimeVostNext5"
+        const val MIN_RATING = 1
+        const val MAX_RATING = 5
         val newsIdRegex = Regex("""/(\d+)-[^/]+\.html(?:[#?].*)?$""")
+        val dleLoginHashRegex = Regex("""var\s+dle_login_hash\s*=\s*['"]([^'"]+)['"]""")
+        val dleLoginHashValueRegex = Regex("""[a-fA-F0-9]{32}""")
+        val ratingWidthRegex = Regex("""width:\s*(\d+(?:\.\d+)?)%""")
     }
 }
