@@ -17,3 +17,7 @@ class AnimeVostHttpException(
 class AnimeVostAuthException(
     message: String,
 ) : AnimeVostException(message)
+
+class AnimeVostRegistrationException(
+    message: String,
+) : AnimeVostException(message)

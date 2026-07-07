@@ -2,7 +2,9 @@ package com.animevost.sdk
 
 import com.animevost.sdk.config.AnimeVostConfig
 import com.animevost.sdk.error.AnimeVostAuthException
+import com.animevost.sdk.error.AnimeVostRegistrationException
 import com.animevost.sdk.http.AnimeVostHttpClient
+import com.animevost.sdk.model.RegistrationRequest
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -116,6 +118,72 @@ class AnimeVostAuthClientTest {
         assertEquals(42, profile.userId)
         assertEquals("test_user", profile.username)
         assertEquals("Tester Name", profile.fullName)
+    }
+
+    @Test
+    fun `register accepts rules and posts live registration form`() = runBlocking {
+        val httpClient = FakeAuthHttpClient(
+            response = "<html>registered</html>",
+            cookiesAfterPost = mapOf("dle_user_id" to "77"),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val result = client.register(
+            RegistrationRequest(
+                username = "new_user",
+                password = "secret123",
+                email = "new@example.test",
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "https://example.test/animevost/index.php?do=register",
+                "https://example.test/animevost/index.php?do=register",
+            ),
+            httpClient.postedUrls,
+        )
+        assertEquals(
+            mapOf(
+                "do" to "register",
+                "dle_rules_accept" to "yes",
+            ),
+            httpClient.postedForms[0],
+        )
+        assertEquals(
+            mapOf(
+                "submit_reg" to "submit_reg",
+                "do" to "register",
+                "name" to "new_user",
+                "password1" to "secret123",
+                "password2" to "secret123",
+                "email" to "new@example.test",
+            ),
+            httpClient.postedForms[1],
+        )
+        assertEquals("new_user", result.username)
+        assertEquals(77, result.session?.userId)
+        assertEquals("new_user", result.session?.username)
+    }
+
+    @Test
+    fun `register rejects registration error response`() = runBlocking {
+        val client = AnimeVostClient(
+            httpClient = FakeAuthHttpClient(response = "<div class=\"berrors\">Ошибка регистрации</div>"),
+        )
+
+        assertFailsWith<AnimeVostRegistrationException> {
+            client.register(
+                RegistrationRequest(
+                    username = "new_user",
+                    password = "secret123",
+                    email = "new@example.test",
+                ),
+            )
+        }
     }
 
     private class FakeAuthHttpClient(

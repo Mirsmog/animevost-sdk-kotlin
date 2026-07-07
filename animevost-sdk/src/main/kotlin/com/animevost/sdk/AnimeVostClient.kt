@@ -2,6 +2,7 @@ package com.animevost.sdk
 
 import com.animevost.sdk.config.AnimeVostConfig
 import com.animevost.sdk.error.AnimeVostAuthException
+import com.animevost.sdk.error.AnimeVostRegistrationException
 import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.http.OkHttpAnimeVostHttpClient
 import com.animevost.sdk.model.AnimeDetails
@@ -10,6 +11,8 @@ import com.animevost.sdk.model.AnimePreview
 import com.animevost.sdk.model.AuthSession
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.NavigationData
+import com.animevost.sdk.model.RegistrationRequest
+import com.animevost.sdk.model.RegistrationResult
 import com.animevost.sdk.model.ScheduleDay
 import com.animevost.sdk.model.UserProfile
 import com.animevost.sdk.model.VideoSource
@@ -78,6 +81,49 @@ class AnimeVostClient(
 
     fun currentSession(): AuthSession? =
         currentSession(username = currentUsername)
+
+    suspend fun register(request: RegistrationRequest): RegistrationResult {
+        val username = request.username.trim()
+        val email = request.email.trim()
+        require(username.isNotBlank()) { "username must not be blank" }
+        require(request.password.isNotBlank()) { "password must not be blank" }
+        require(email.isNotBlank()) { "email must not be blank" }
+
+        val registerUrl = URI(normalizedBaseUrl()).resolve("index.php?do=register").toString()
+        httpClient.post(
+            url = registerUrl,
+            form = mapOf(
+                "do" to "register",
+                "dle_rules_accept" to "yes",
+            ),
+            headers = requestHeaders(),
+        )
+        val response = httpClient.post(
+            url = registerUrl,
+            form = mapOf(
+                "submit_reg" to "submit_reg",
+                "do" to "register",
+                "name" to username,
+                "password1" to request.password,
+                "password2" to request.password,
+                "email" to email,
+            ),
+            headers = requestHeaders(),
+        )
+
+        if (response.hasRegistrationError()) {
+            throw AnimeVostRegistrationException("Registration failed")
+        }
+
+        val session = currentSession(username = username)
+        if (session != null) {
+            currentUsername = username
+        }
+        return RegistrationResult(
+            username = username,
+            session = session,
+        )
+    }
 
     suspend fun getProfile(username: String? = currentUsername): UserProfile {
         val profileUsername = username
@@ -226,6 +272,11 @@ class AnimeVostClient(
 
     private fun String.hasAuthError(): Boolean =
         contains("Ошибка авторизации") || contains("berrors")
+
+    private fun String.hasRegistrationError(): Boolean =
+        contains("Ошибка") ||
+            contains("berrors") ||
+            contains("уже используется", ignoreCase = true)
 
     private companion object {
         const val SEARCH_PAGE_SIZE = 10
