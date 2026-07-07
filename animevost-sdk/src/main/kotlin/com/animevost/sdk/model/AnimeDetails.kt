@@ -20,7 +20,14 @@ data class AnimeDetails(
     val voteCount: Int?,
     val description: String?,
     val categories: List<AnimeCategory>,
+    val relatedSeries: List<RelatedSeries>,
     val episodes: List<AnimeEpisode>,
+)
+
+data class RelatedSeries(
+    val title: String,
+    val url: String,
+    val description: String?,
 )
 
 data class AnimeEpisode(

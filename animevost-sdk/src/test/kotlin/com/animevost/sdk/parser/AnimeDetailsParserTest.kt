@@ -53,6 +53,23 @@ class AnimeDetailsParserTest {
                       <script>
                         var data = {"1 серия":"100443228","2 серия":"703736351",};
                       </script>
+                      <div class="title_spoiler">
+                        <a href="javascript:ShowOrHide('series')">Это аниме состоит из:</a>
+                      </div>
+                      <div id="series" class="text_spoiler" style="display:none;">
+                        <ol>
+                          <li>
+                            <a href="/tip/tv/116-bleach.html" title="Блич">Блич</a>
+                            - ТВ (366 эп.), адаптация манги, 2004
+                          </li>
+                          <li>
+                            <a href="/tip/tv/2751-bleach-sennen-kessen-hen.html" title="Блич: Тысячелетняя кровавая война">
+                              Блич: Тысячелетняя кровавая война
+                            </a>
+                            - ТВ (12+ эп.), продолжение, 2022
+                          </li>
+                        </ol>
+                      </div>
                       <div class="shortstoryFuter">
                         <span><strong>Категории:</strong>
                           <i>
@@ -91,6 +108,9 @@ class AnimeDetailsParserTest {
         assertEquals(listOf("100443228", "703736351"), details.episodes.map { it.videoId })
         assertEquals(listOf(1, 2), details.episodes.map { it.number })
         assertEquals("https://media.aniland.org/img/100443228.jpg", details.episodes.first().thumbnailUrl)
+        assertEquals(listOf("Блич", "Блич: Тысячелетняя кровавая война"), details.relatedSeries.map { it.title })
+        assertEquals("https://animevost.org/tip/tv/116-bleach.html", details.relatedSeries.first().url)
+        assertEquals("ТВ (366 эп.), адаптация манги, 2004", details.relatedSeries.first().description)
     }
 
     @Test

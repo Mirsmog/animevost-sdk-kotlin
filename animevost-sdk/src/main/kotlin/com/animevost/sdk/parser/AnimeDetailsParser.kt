@@ -3,6 +3,7 @@ package com.animevost.sdk.parser
 import com.animevost.sdk.model.AnimeCategory
 import com.animevost.sdk.model.AnimeDetails
 import com.animevost.sdk.model.AnimeEpisode
+import com.animevost.sdk.model.RelatedSeries
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URI
@@ -65,6 +66,7 @@ class AnimeDetailsParser {
                 ?.takeIf { it.isNotBlank() }
                 ?: extractField(content, "Описание"),
             categories = parseCategories(story),
+            relatedSeries = parseRelatedSeries(story),
             episodes = parseEpisodes(html),
         )
     }
@@ -120,6 +122,29 @@ class AnimeDetailsParser {
             AnimeCategory(title = title, url = url)
         }
 
+    private fun parseRelatedSeries(story: Element): List<RelatedSeries> {
+        val spoiler = story.select(".title_spoiler")
+            .firstOrNull { it.text().contains("состоит", ignoreCase = true) }
+            ?.nextElementSibling()
+            ?.takeIf { it.hasClass("text_spoiler") }
+            ?: return emptyList()
+
+        return spoiler.select("li").mapNotNull { item ->
+            val link = item.selectFirst("a[href]") ?: return@mapNotNull null
+            val title = link.attr("title").ifBlank { link.text() }.trim()
+            val url = link.absUrl("href")
+            if (title.isBlank() || url.isBlank()) return@mapNotNull null
+
+            RelatedSeries(
+                title = title,
+                url = url,
+                description = normalizeText(item.ownText())
+                    .trimStart('-', ' ')
+                    .takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
     private fun parseEpisodes(html: String): List<AnimeEpisode> {
         val data = dataBlockRegex.find(html)?.groupValues?.get(1) ?: return emptyList()
         return dataEntryRegex.findAll(data).map { match ->
@@ -146,6 +171,11 @@ class AnimeDetailsParser {
     private fun parseInt(text: String?): Int? =
         text?.replace(nonDigitsRegex, "")?.takeIf { it.isNotBlank() }?.toIntOrNull()
 
+    private fun normalizeText(text: String): String =
+        text.replace('\u00A0', ' ')
+            .replace(whitespaceRegex, " ")
+            .trim()
+
     private fun normalizeBaseUrl(baseUrl: String): String =
         baseUrl.trim().trimEnd('/') + "/"
 
@@ -157,5 +187,6 @@ class AnimeDetailsParser {
         val idRegex = Regex("""(?:vote-num-id-|/)(\d+)(?:-|$)""")
         val ratingWidthRegex = Regex("""width:\s*(\d+(?:\.\d+)?)%""")
         val nonDigitsRegex = Regex("""[^\d]""")
+        val whitespaceRegex = Regex("""\s+""")
     }
 }
