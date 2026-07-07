@@ -309,5 +309,9 @@ class AnimeVostClientTest {
             postedHeaders += headers
             return response
         }
+
+        override fun getCookie(name: String): String? = null
+
+        override fun clearCookies() = Unit
     }
 }

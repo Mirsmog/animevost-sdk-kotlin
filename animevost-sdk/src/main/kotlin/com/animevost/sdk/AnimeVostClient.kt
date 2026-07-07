@@ -1,11 +1,13 @@
 package com.animevost.sdk
 
 import com.animevost.sdk.config.AnimeVostConfig
+import com.animevost.sdk.error.AnimeVostAuthException
 import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.http.OkHttpAnimeVostHttpClient
 import com.animevost.sdk.model.AnimeDetails
 import com.animevost.sdk.model.AnimePage
 import com.animevost.sdk.model.AnimePreview
+import com.animevost.sdk.model.AuthSession
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.NavigationData
 import com.animevost.sdk.model.ScheduleDay
@@ -30,6 +32,50 @@ class AnimeVostClient(
     private val navigationParser: NavigationParser = NavigationParser(),
     private val randomAnimeParser: RandomAnimeParser = RandomAnimeParser(),
 ) {
+    private var currentUsername: String? = null
+
+    suspend fun login(username: String, password: String): AuthSession {
+        require(username.isNotBlank()) { "username must not be blank" }
+        require(password.isNotBlank()) { "password must not be blank" }
+
+        val response = httpClient.post(
+            url = URI(normalizedBaseUrl()).resolve("index.php?do=login").toString(),
+            form = mapOf(
+                "login_name" to username.trim(),
+                "login_password" to password,
+                "login" to "submit",
+            ),
+            headers = requestHeaders(),
+        )
+
+        if (response.hasAuthError()) {
+            httpClient.clearCookies()
+            throw AnimeVostAuthException("Invalid username or password")
+        }
+
+        val session = currentSession(username = username.trim())
+            ?: throw AnimeVostAuthException("Login did not return auth cookies")
+        currentUsername = session.username
+        return session
+    }
+
+    suspend fun logout() {
+        runCatching {
+            httpClient.get(
+                url = URI(normalizedBaseUrl()).resolve("index.php?action=logout").toString(),
+                headers = requestHeaders(),
+            )
+        }
+        httpClient.clearCookies()
+        currentUsername = null
+    }
+
+    fun isLoggedIn(): Boolean =
+        authUserId() != null
+
+    fun currentSession(): AuthSession? =
+        currentSession(username = currentUsername)
+
     suspend fun getSchedule(): List<ScheduleDay> {
         val html = httpClient.get(
             url = normalizedBaseUrl(),
@@ -141,6 +187,22 @@ class AnimeVostClient(
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8)
+
+    private fun currentSession(username: String?): AuthSession? {
+        val userId = authUserId() ?: return null
+        return AuthSession(
+            userId = userId,
+            username = username,
+        )
+    }
+
+    private fun authUserId(): Int? =
+        httpClient.getCookie("dle_user_id")
+            ?.takeIf { it != "deleted" }
+            ?.toIntOrNull()
+
+    private fun String.hasAuthError(): Boolean =
+        contains("Ошибка авторизации") || contains("berrors")
 
     private companion object {
         const val SEARCH_PAGE_SIZE = 10

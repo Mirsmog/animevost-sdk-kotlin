@@ -8,4 +8,8 @@ interface AnimeVostHttpClient {
         form: Map<String, String>,
         headers: Map<String, String> = emptyMap(),
     ): String
+
+    fun getCookie(name: String): String?
+
+    fun clearCookies()
 }

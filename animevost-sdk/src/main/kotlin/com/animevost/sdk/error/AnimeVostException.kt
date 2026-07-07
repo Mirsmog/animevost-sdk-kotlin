@@ -13,3 +13,7 @@ class AnimeVostHttpException(
     val statusCode: Int,
     message: String,
 ) : AnimeVostException("HTTP $statusCode: $message")
+
+class AnimeVostAuthException(
+    message: String,
+) : AnimeVostException(message)

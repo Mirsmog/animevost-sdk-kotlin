@@ -11,7 +11,8 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class OkHttpAnimeVostHttpClient(
-    private val client: OkHttpClient = defaultClient(),
+    private val cookieStore: AnimeVostCookieStore = InMemoryAnimeVostCookieStore(),
+    private val client: OkHttpClient = defaultClient(cookieStore),
 ) : AnimeVostHttpClient {
 
     override suspend fun get(url: String, headers: Map<String, String>): String =
@@ -46,6 +47,13 @@ class OkHttpAnimeVostHttpClient(
             execute(request)
         }
 
+    override fun getCookie(name: String): String? =
+        cookieStore.get(name)
+
+    override fun clearCookies() {
+        cookieStore.clear()
+    }
+
     private fun execute(request: Request): String {
         try {
             client.newCall(request).execute().use { response ->
@@ -60,8 +68,9 @@ class OkHttpAnimeVostHttpClient(
     }
 
     private companion object {
-        fun defaultClient(): OkHttpClient =
+        fun defaultClient(cookieStore: AnimeVostCookieStore): OkHttpClient =
             OkHttpClient.Builder()
+                .cookieJar(AnimeVostCookieJar(cookieStore))
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .build()
