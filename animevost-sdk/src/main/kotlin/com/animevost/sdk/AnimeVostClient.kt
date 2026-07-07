@@ -11,12 +11,14 @@ import com.animevost.sdk.model.AuthSession
 import com.animevost.sdk.model.CatalogFilter
 import com.animevost.sdk.model.NavigationData
 import com.animevost.sdk.model.ScheduleDay
+import com.animevost.sdk.model.UserProfile
 import com.animevost.sdk.model.VideoSource
 import com.animevost.sdk.parser.AnimeDetailsParser
 import com.animevost.sdk.parser.AnimeListParser
 import com.animevost.sdk.parser.NavigationParser
 import com.animevost.sdk.parser.RandomAnimeParser
 import com.animevost.sdk.parser.ScheduleParser
+import com.animevost.sdk.parser.UserProfileParser
 import com.animevost.sdk.parser.VideoSourceParser
 import java.net.URI
 import java.net.URLEncoder
@@ -31,6 +33,7 @@ class AnimeVostClient(
     private val videoSourceParser: VideoSourceParser = VideoSourceParser(),
     private val navigationParser: NavigationParser = NavigationParser(),
     private val randomAnimeParser: RandomAnimeParser = RandomAnimeParser(),
+    private val userProfileParser: UserProfileParser = UserProfileParser(),
 ) {
     private var currentUsername: String? = null
 
@@ -75,6 +78,23 @@ class AnimeVostClient(
 
     fun currentSession(): AuthSession? =
         currentSession(username = currentUsername)
+
+    suspend fun getProfile(username: String? = currentUsername): UserProfile {
+        val profileUsername = username
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("username must not be blank")
+
+        val baseUrl = normalizedBaseUrl()
+        val profileUrl = URI(baseUrl)
+            .resolve("user/${encodePathSegment(profileUsername)}/")
+            .toString()
+        val html = httpClient.get(
+            url = profileUrl,
+            headers = requestHeaders(),
+        )
+        return userProfileParser.parse(html, profileUrl)
+    }
 
     suspend fun getSchedule(): List<ScheduleDay> {
         val html = httpClient.get(
@@ -187,6 +207,9 @@ class AnimeVostClient(
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8)
+
+    private fun encodePathSegment(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
 
     private fun currentSession(username: String?): AuthSession? {
         val userId = authUserId() ?: return null

@@ -91,6 +91,33 @@ class AnimeVostAuthClientTest {
         assertFalse(client.isLoggedIn())
     }
 
+    @Test
+    fun `getProfile fetches user page and parses profile`() = runBlocking {
+        val httpClient = FakeAuthHttpClient(
+            response = """
+                <html>
+                  <body>
+                    <form id="userinfo">
+                      <input name="id" value="42" />
+                      <input name="fullname" value="Tester Name" />
+                    </form>
+                  </body>
+                </html>
+            """.trimIndent(),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        val profile = client.getProfile("test_user")
+
+        assertEquals(listOf("https://example.test/animevost/user/test_user/"), httpClient.requestedUrls)
+        assertEquals(42, profile.userId)
+        assertEquals("test_user", profile.username)
+        assertEquals("Tester Name", profile.fullName)
+    }
+
     private class FakeAuthHttpClient(
         private val response: String,
         initialCookies: Map<String, String> = emptyMap(),
