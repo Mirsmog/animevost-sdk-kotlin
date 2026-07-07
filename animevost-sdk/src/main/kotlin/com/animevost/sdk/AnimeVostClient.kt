@@ -10,6 +10,7 @@ import com.animevost.sdk.model.AnimePage
 import com.animevost.sdk.model.AnimePreview
 import com.animevost.sdk.model.AuthSession
 import com.animevost.sdk.model.CatalogFilter
+import com.animevost.sdk.model.FavoriteActionResult
 import com.animevost.sdk.model.NavigationData
 import com.animevost.sdk.model.RegistrationActivationResult
 import com.animevost.sdk.model.RegistrationRequest
@@ -21,6 +22,7 @@ import com.animevost.sdk.model.UserProfileUpdate
 import com.animevost.sdk.model.VideoSource
 import com.animevost.sdk.parser.AnimeDetailsParser
 import com.animevost.sdk.parser.AnimeListParser
+import com.animevost.sdk.parser.FavoritesParser
 import com.animevost.sdk.parser.NavigationParser
 import com.animevost.sdk.parser.RandomAnimeParser
 import com.animevost.sdk.parser.ScheduleParser
@@ -40,6 +42,7 @@ class AnimeVostClient(
     private val navigationParser: NavigationParser = NavigationParser(),
     private val randomAnimeParser: RandomAnimeParser = RandomAnimeParser(),
     private val userProfileParser: UserProfileParser = UserProfileParser(),
+    private val favoritesParser: FavoritesParser = FavoritesParser(),
 ) {
     private var currentUsername: String? = null
 
@@ -188,6 +191,25 @@ class AnimeVostClient(
         return userProfileParser.parse(response, profileUrl)
     }
 
+    suspend fun getFavorites(page: Int = 1): AnimePage {
+        requireAuthenticated()
+        require(page >= 1) { "page must be greater than zero" }
+
+        val baseUrl = normalizedBaseUrl()
+        val favoritesUrl = URI(baseUrl).resolve("favorites/").toString()
+        val html = httpClient.get(
+            url = if (page == 1) favoritesUrl else "${favoritesUrl}page/$page/",
+            headers = requestHeaders(),
+        )
+        return favoritesParser.parse(html, baseUrl)
+    }
+
+    suspend fun addFavorite(newsId: Int): FavoriteActionResult =
+        updateFavorite(newsId = newsId, action = "add", isFavorite = true)
+
+    suspend fun removeFavorite(newsId: Int): FavoriteActionResult =
+        updateFavorite(newsId = newsId, action = "del", isFavorite = false)
+
     suspend fun getSchedule(): List<ScheduleDay> {
         val html = httpClient.get(
             url = normalizedBaseUrl(),
@@ -320,6 +342,32 @@ class AnimeVostClient(
         httpClient.getCookie("dle_user_id")
             ?.takeIf { it != "deleted" }
             ?.toIntOrNull()
+
+    private fun requireAuthenticated() {
+        if (!isLoggedIn()) {
+            throw AnimeVostAuthException("Authentication required")
+        }
+    }
+
+    private suspend fun updateFavorite(
+        newsId: Int,
+        action: String,
+        isFavorite: Boolean,
+    ): FavoriteActionResult {
+        requireAuthenticated()
+        require(newsId > 0) { "newsId must be greater than zero" }
+
+        httpClient.get(
+            url = URI(normalizedBaseUrl())
+                .resolve("index.php?do=favorites&doaction=$action&id=$newsId")
+                .toString(),
+            headers = requestHeaders(),
+        )
+        return FavoriteActionResult(
+            newsId = newsId,
+            isFavorite = isFavorite,
+        )
+    }
 
     private fun String.hasAuthError(): Boolean =
         contains("Ошибка авторизации") || contains("berrors")
