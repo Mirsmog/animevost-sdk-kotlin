@@ -13,6 +13,18 @@ data class NavigationData(
     val sections: List<CatalogLink> = emptyList(),
 )
 
+enum class CatalogSort(
+    val dleField: String,
+) {
+    DATE("date"),
+    RATING("rating"),
+    VIEWS("news_read"),
+    COMMENTS("comm_num"),
+    TITLE("title"),
+}
+
 data class CatalogFilter(
     val path: String? = null,
+    val sortBy: CatalogSort = CatalogSort.DATE,
+    val sortAscending: Boolean = false,
 )

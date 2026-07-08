@@ -3,6 +3,7 @@ package com.animevost.sdk
 import com.animevost.sdk.config.AnimeVostConfig
 import com.animevost.sdk.http.AnimeVostHttpClient
 import com.animevost.sdk.model.CatalogFilter
+import com.animevost.sdk.model.CatalogSort
 import com.animevost.sdk.model.Weekday
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -44,7 +45,7 @@ class AnimeVostClientTest {
     }
 
     @Test
-    fun `getAnimeList fetches base page by default`() = runBlocking {
+    fun `getAnimeList posts sort form and parses base page by default`() = runBlocking {
         val httpClient = FakeHttpClient(response = animeListHtml())
         val client = AnimeVostClient(
             config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
@@ -53,13 +54,23 @@ class AnimeVostClientTest {
 
         val page = client.getAnimeList()
 
-        assertEquals(listOf("https://example.test/animevost/"), httpClient.requestedUrls)
+        assertEquals(listOf("https://example.test/animevost/"), httpClient.postedUrls)
+        assertEquals(
+            mapOf(
+                "dlenewssortby" to "date",
+                "dledirection" to "desc",
+                "set_new_sort" to "dle_sort_main",
+                "set_direction_sort" to "dle_direction_main",
+            ),
+            httpClient.postedForms.single(),
+        )
+        assertEquals(emptyList(), httpClient.requestedUrls)
         assertEquals(3970, page.items.single().id)
         assertEquals("Забывчивая святая дева", page.items.single().title)
     }
 
     @Test
-    fun `getAnimeList fetches requested page`() = runBlocking {
+    fun `getAnimeList sets sort cookie before requested page`() = runBlocking {
         val httpClient = FakeHttpClient(response = animeListHtml())
         val client = AnimeVostClient(
             config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
@@ -68,11 +79,12 @@ class AnimeVostClientTest {
 
         client.getAnimeList(page = 2)
 
+        assertEquals(listOf("https://example.test/animevost/"), httpClient.postedUrls)
         assertEquals(listOf("https://example.test/animevost/page/2/"), httpClient.requestedUrls)
     }
 
     @Test
-    fun `getAnimeList fetches catalog filter page`() = runBlocking {
+    fun `getAnimeList sets category sort cookie before catalog filter page`() = runBlocking {
         val httpClient = FakeHttpClient(response = animeListHtml())
         val client = AnimeVostClient(
             config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
@@ -84,7 +96,57 @@ class AnimeVostClientTest {
             filter = CatalogFilter(path = "tip/tv/"),
         )
 
+        assertEquals(listOf("https://example.test/animevost/tip/tv/"), httpClient.postedUrls)
+        assertEquals(
+            mapOf(
+                "dlenewssortby" to "date",
+                "dledirection" to "desc",
+                "set_new_sort" to "dle_sort_cat",
+                "set_direction_sort" to "dle_direction_cat",
+            ),
+            httpClient.postedForms.single(),
+        )
         assertEquals(listOf("https://example.test/animevost/tip/tv/page/2/"), httpClient.requestedUrls)
+    }
+
+    @Test
+    fun `getAnimeList supports custom sort and direction`() = runBlocking {
+        val httpClient = FakeHttpClient(response = animeListHtml())
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        client.getAnimeList(
+            filter = CatalogFilter(
+                sortBy = CatalogSort.RATING,
+                sortAscending = true,
+            ),
+        )
+
+        assertEquals(
+            mapOf(
+                "dlenewssortby" to "rating",
+                "dledirection" to "asc",
+                "set_new_sort" to "dle_sort_main",
+                "set_direction_sort" to "dle_direction_main",
+            ),
+            httpClient.postedForms.single(),
+        )
+    }
+
+    @Test
+    fun `getAnimeList treats slash path as main catalog`() = runBlocking {
+        val httpClient = FakeHttpClient(response = animeListHtml())
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
+            httpClient = httpClient,
+        )
+
+        client.getAnimeList(filter = CatalogFilter(path = "/"))
+
+        assertEquals(listOf("https://example.test/animevost/"), httpClient.postedUrls)
+        assertEquals("dle_sort_main", httpClient.postedForms.single()["set_new_sort"])
     }
 
     @Test
@@ -122,9 +184,15 @@ class AnimeVostClientTest {
     }
 
     @Test
-    fun `getVideoSources fetches getlink endpoint and parses response`() = runBlocking {
+    fun `getVideoSources fetches player frame and parses response`() = runBlocking {
         val httpClient = FakeHttpClient(
-            response = "https://std.roomfish.ru/100443228.mp4 or https://ram.roomfish.ru/100443228.mp4",
+            response = """
+                <script>
+                  var player = new Playerjs({
+                    "file":"[SD (480p)]https://std.roomfish.ru/100443228.mp4"
+                  });
+                </script>
+            """.trimIndent(),
         )
         val client = AnimeVostClient(
             config = AnimeVostConfig(baseUrl = "https://example.test/animevost/"),
@@ -133,8 +201,9 @@ class AnimeVostClientTest {
 
         val sources = client.getVideoSources("100443228")
 
-        assertEquals(listOf("https://example.test/animevost/getlink.php?id=100443228"), httpClient.requestedUrls)
-        assertEquals(listOf("std.roomfish.ru", "ram.roomfish.ru"), sources.map { it.host })
+        assertEquals(listOf("https://example.test/animevost/frame5.php?play=100443228&old=1"), httpClient.requestedUrls)
+        assertEquals(listOf("SD (480p)"), sources.map { it.quality })
+        assertEquals(listOf("std.roomfish.ru"), sources.map { it.host })
     }
 
     @Test

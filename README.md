@@ -9,7 +9,8 @@ The SDK talks to AnimeVost directly and parses site responses locally. No custom
 ## Features
 
 - catalog, search, schedule, navigation
-- anime details, episodes, video sources
+- catalog sorting via DLE sort cookies
+- anime details, episodes, video sources with quality and download links
 - login, logout, registration, email activation
 - profile read and update
 - favorites

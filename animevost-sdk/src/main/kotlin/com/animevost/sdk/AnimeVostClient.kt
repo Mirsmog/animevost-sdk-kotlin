@@ -432,10 +432,19 @@ class AnimeVostClient(
 
         val baseUrl = normalizedBaseUrl()
         val catalogUrl = catalogUrl(baseUrl, filter)
-        val html = httpClient.get(
-            url = if (page == 1) catalogUrl else "${catalogUrl}page/$page/",
+        val sortResponse = httpClient.post(
+            url = catalogUrl,
+            form = catalogSortForm(filter),
             headers = requestHeaders(),
         )
+        val html = if (page == 1) {
+            sortResponse
+        } else {
+            httpClient.get(
+                url = "${catalogUrl}page/$page/",
+                headers = requestHeaders(),
+            )
+        }
         return animeListParser.parse(html, baseUrl)
     }
 
@@ -501,7 +510,7 @@ class AnimeVostClient(
         require(videoId.isNotBlank()) { "videoId must not be blank" }
 
         val requestUrl = URI(normalizedBaseUrl())
-            .resolve("getlink.php?id=${encode(videoId.trim())}")
+            .resolve("frame5.php?play=${encode(videoId.trim())}&old=1")
             .toString()
         val response = httpClient.get(
             url = requestUrl,
@@ -521,6 +530,22 @@ class AnimeVostClient(
             ?: return baseUrl
         return URI(baseUrl).resolve(path).toString().trimEnd('/') + "/"
     }
+
+    private fun catalogSortForm(filter: CatalogFilter): Map<String, String> {
+        val sortScope = if (isMainCatalogFilter(filter)) "main" else "cat"
+        return mapOf(
+            "dlenewssortby" to filter.sortBy.dleField,
+            "dledirection" to if (filter.sortAscending) "asc" else "desc",
+            "set_new_sort" to "dle_sort_$sortScope",
+            "set_direction_sort" to "dle_direction_$sortScope",
+        )
+    }
+
+    private fun isMainCatalogFilter(filter: CatalogFilter): Boolean =
+        filter.path
+            ?.trim()
+            ?.trim('/')
+            .isNullOrBlank()
 
     private fun profileUrl(username: String): String =
         URI(normalizedBaseUrl())

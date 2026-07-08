@@ -113,7 +113,9 @@ Nullable fields are marked with `?`.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `url` | `String` | Video URL. |
+| `quality` | `String` | Quality label, for example `SD (480p)`. |
+| `url` | `String` | Playback URL. |
+| `downloadUrl` | `String?` | Direct download URL when available. |
 | `host` | `String?` | Source host when known. |
 
 ## Catalog
@@ -140,6 +142,18 @@ Nullable fields are marked with `?`.
 | Field | Type | Description |
 | --- | --- | --- |
 | `path` | `String?` | Catalog path, for example `tip/tv/`. |
+| `sortBy` | `CatalogSort` | DLE sort field. |
+| `sortAscending` | `Boolean` | `true` for ascending order. |
+
+### `CatalogSort`
+
+| Value | DLE field |
+| --- | --- |
+| `DATE` | `date` |
+| `RATING` | `rating` |
+| `VIEWS` | `news_read` |
+| `COMMENTS` | `comm_num` |
+| `TITLE` | `title` |
 
 ## Schedule
 
