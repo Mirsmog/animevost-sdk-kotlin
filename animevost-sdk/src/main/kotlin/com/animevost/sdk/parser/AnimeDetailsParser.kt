@@ -181,7 +181,7 @@ class AnimeDetailsParser {
 
     private companion object {
         const val thumbnailBaseUrl = "https://media.aniland.org/img/"
-        val dataBlockRegex = Regex("""var\s+data\s*=\s*\{(.*?)}\s*;""", RegexOption.DOT_MATCHES_ALL)
+        val dataBlockRegex = Regex("""var\s+data\s*=\s*[{](.*?)[}]\s*;""", RegexOption.DOT_MATCHES_ALL)
         val dataEntryRegex = Regex("""["']([^"']+)["']\s*:\s*["'](\d+)["']""")
         val episodeNumberRegex = Regex("""\d+""")
         val idRegex = Regex("""(?:vote-num-id-|/)(\d+)(?:-|$)""")
