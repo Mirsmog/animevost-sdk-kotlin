@@ -173,6 +173,38 @@ class AnimeVostAuthClientTest {
     }
 
     @Test
+    fun `register clears an existing authenticated session before opening form`() = runBlocking {
+        val httpClient = FakeAuthHttpClient(
+            response = "<html>registered</html>",
+            initialCookies = mapOf(
+                "dle_user_id" to "42",
+                "dle_password" to "old_password_hash",
+                "dle_hash" to "old_session_hash",
+            ),
+            cookiesAfterPost = mapOf("dle_user_id" to "77"),
+        )
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/"),
+            httpClient = httpClient,
+        )
+
+        assertTrue(client.isLoggedIn())
+
+        val result = client.register(
+            RegistrationRequest(
+                username = "new_user",
+                password = "secret123",
+                email = "new@example.test",
+            ),
+        )
+
+        assertTrue(httpClient.cookiesCleared)
+        assertTrue(httpClient.cookiesAtPost.first().isEmpty())
+        assertEquals(77, result.session?.userId)
+        assertEquals("new_user", result.session?.username)
+    }
+
+    @Test
     fun `register reports pending email activation when server requires confirmation`() = runBlocking {
         val httpClient = FakeAuthHttpClient(
             response = """
@@ -226,10 +258,12 @@ class AnimeVostAuthClientTest {
     @Test
     fun `register rejects registration error response`() = runBlocking {
         val client = AnimeVostClient(
-            httpClient = FakeAuthHttpClient(response = "<div class=\"berrors\">Ошибка регистрации</div>"),
+            httpClient = FakeAuthHttpClient(
+                response = "<div class=\"berrors\">Это имя уже используется</div>",
+            ),
         )
 
-        assertFailsWith<AnimeVostRegistrationException> {
+        val error = assertFailsWith<AnimeVostRegistrationException> {
             client.register(
                 RegistrationRequest(
                     username = "new_user",
@@ -238,6 +272,7 @@ class AnimeVostAuthClientTest {
                 ),
             )
         }
+        assertEquals("Это имя уже используется", error.message)
     }
 
     @Test
@@ -310,6 +345,7 @@ class AnimeVostAuthClientTest {
         val requestedUrls = mutableListOf<String>()
         val postedUrls = mutableListOf<String>()
         val postedForms = mutableListOf<Map<String, String>>()
+        val cookiesAtPost = mutableListOf<Map<String, String>>()
         val multipartUrls = mutableListOf<String>()
         val multipartForms = mutableListOf<Map<String, String>>()
         var cookiesCleared = false
@@ -327,6 +363,7 @@ class AnimeVostAuthClientTest {
         ): String {
             postedUrls += url
             postedForms += form
+            cookiesAtPost += cookies.toMap()
             cookies += cookiesAfterPost
             return response
         }

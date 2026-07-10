@@ -40,6 +40,7 @@ import com.animevost.sdk.parser.UserProfileParser
 import com.animevost.sdk.parser.VideoSourceParser
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CancellationException
 import org.jsoup.Jsoup
 import java.net.URI
 import java.net.URLEncoder
@@ -77,27 +78,31 @@ class AnimeVostClient(
 
         rememberLoginHash(response)
         if (response.hasAuthError()) {
-            httpClient.clearCookies()
-            currentLoginHash = null
+            clearLocalSession()
             throw AnimeVostAuthException("Invalid username or password")
         }
 
         val session = currentSession(username = username.trim())
-            ?: throw AnimeVostAuthException("Login did not return auth cookies")
+            ?: run {
+                clearLocalSession()
+                throw AnimeVostAuthException("Login did not return auth cookies")
+            }
         currentUsername = session.username
         return session
     }
 
     suspend fun logout() {
-        runCatching {
+        try {
             httpClient.get(
                 url = URI(normalizedBaseUrl()).resolve("index.php?action=logout").toString(),
                 headers = requestHeaders(),
             )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+        } finally {
+            clearLocalSession()
         }
-        httpClient.clearCookies()
-        currentUsername = null
-        currentLoginHash = null
     }
 
     fun isLoggedIn(): Boolean =
@@ -112,6 +117,9 @@ class AnimeVostClient(
         require(username.isNotBlank()) { "username must not be blank" }
         require(request.password.isNotBlank()) { "password must not be blank" }
         require(email.isNotBlank()) { "email must not be blank" }
+
+        // Registration must never inherit an authenticated session from a previous account.
+        clearLocalSession()
 
         val registerUrl = URI(normalizedBaseUrl()).resolve("index.php?do=register").toString()
         httpClient.post(
@@ -137,7 +145,9 @@ class AnimeVostClient(
 
         rememberLoginHash(response)
         if (response.hasRegistrationError()) {
-            throw AnimeVostRegistrationException("Registration failed")
+            throw AnimeVostRegistrationException(
+                response.registrationErrorMessage() ?: "Registration failed",
+            )
         }
 
         val session = currentSession(username = username)
@@ -237,7 +247,7 @@ class AnimeVostClient(
         require(page >= 1) { "page must be greater than zero" }
 
         val baseUrl = normalizedBaseUrl()
-        val requestUrl = URI(baseUrl).resolve(animeUrl.trim()).toString()
+        val requestUrl = resolveSiteUrl(animeUrl.trim())
         if (page > 1) {
             val newsId = extractNewsId(requestUrl)
                 ?: throw IllegalArgumentException("animeUrl must contain news id")
@@ -494,7 +504,7 @@ class AnimeVostClient(
         require(url.isNotBlank()) { "url must not be blank" }
 
         val baseUrl = normalizedBaseUrl()
-        val requestUrl = URI(baseUrl).resolve(url.trim()).toString()
+        val requestUrl = resolveSiteUrl(url.trim())
         val html = httpClient.get(
             url = requestUrl,
             headers = requestHeaders(),
@@ -528,7 +538,17 @@ class AnimeVostClient(
             ?.trimStart('/')
             ?.takeIf { it.isNotBlank() }
             ?: return baseUrl
-        return URI(baseUrl).resolve(path).toString().trimEnd('/') + "/"
+        return resolveSiteUrl(path).trimEnd('/') + "/"
+    }
+
+    private fun resolveSiteUrl(value: String): String {
+        val base = URI(normalizedBaseUrl())
+        val resolved = base.resolve(value)
+        require(
+            resolved.scheme.equals(base.scheme, ignoreCase = true) &&
+                resolved.host.equals(base.host, ignoreCase = true),
+        ) { "URL must belong to the configured AnimeVost host" }
+        return resolved.toString()
     }
 
     private fun catalogSortForm(filter: CatalogFilter): Map<String, String> {
@@ -611,6 +631,12 @@ class AnimeVostClient(
             ?: currentLoginHash
     }
 
+    private fun clearLocalSession() {
+        httpClient.clearCookies()
+        currentUsername = null
+        currentLoginHash = null
+    }
+
     private fun validateServerResponse(response: String) {
         val message = normalizeServerMessage(response)
         if (message.isBlank()) return
@@ -689,6 +715,13 @@ class AnimeVostClient(
         contains("Ошибка") ||
             contains("berrors") ||
             contains("уже используется", ignoreCase = true)
+
+    private fun String.registrationErrorMessage(): String? =
+        Jsoup.parse(this)
+            .selectFirst(".berrors")
+            ?.text()
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
 
     private fun String.hasActivationSuccess(): Boolean =
         contains("активирован", ignoreCase = true) ||

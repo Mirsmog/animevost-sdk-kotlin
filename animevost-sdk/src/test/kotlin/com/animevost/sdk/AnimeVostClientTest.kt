@@ -184,6 +184,18 @@ class AnimeVostClientTest {
     }
 
     @Test
+    fun `getAnimeDetails rejects external url`() = runBlocking {
+        val client = AnimeVostClient(
+            config = AnimeVostConfig(baseUrl = "https://example.test/"),
+            httpClient = FakeHttpClient(response = animeDetailsHtml()),
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            client.getAnimeDetails("https://attacker.test/private")
+        }
+    }
+
+    @Test
     fun `getVideoSources fetches player frame and parses response`() = runBlocking {
         val httpClient = FakeHttpClient(
             response = """
