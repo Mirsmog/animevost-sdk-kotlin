@@ -2,97 +2,118 @@ package com.animevost.sdk.http
 
 import com.animevost.sdk.error.AnimeVostHttpException
 import com.animevost.sdk.error.AnimeVostNetworkException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.FormBody
+import okhttp3.CookieJar
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class OkHttpAnimeVostHttpClient(
     private val cookieStore: AnimeVostCookieStore = InMemoryAnimeVostCookieStore(),
-    private val client: OkHttpClient = defaultClient(cookieStore),
+    client: OkHttpClient? = null,
 ) : AnimeVostHttpClient {
 
-    override suspend fun get(url: String, headers: Map<String, String>): String =
-        withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url(url)
-                .apply {
-                    headers.forEach { (name, value) -> header(name, value) }
-                }
-                .build()
+    private val cookieJar = AnimeVostCookieJar(cookieStore)
+    private val client = client
+        ?.newBuilder()
+        ?.cookieJar(cookieJar)
+        ?.build()
+        ?: defaultClient(cookieJar)
 
-            execute(request)
-        }
+    override suspend fun get(url: String, headers: Map<String, String>): String {
+        val request = Request.Builder()
+            .url(url)
+            .apply {
+                headers.forEach { (name, value) -> header(name, value) }
+            }
+            .build()
+        return execute(request)
+    }
 
     override suspend fun post(
         url: String,
         form: Map<String, String>,
         headers: Map<String, String>,
-    ): String =
-        withContext(Dispatchers.IO) {
-            val body = FormBody.Builder()
-                .apply { form.forEach { (name, value) -> add(name, value) } }
-                .build()
-            val request = Request.Builder()
-                .url(url)
-                .post(body)
-                .apply {
-                    headers.forEach { (name, value) -> header(name, value) }
-                }
-                .build()
-
-            execute(request)
-        }
+    ): String {
+        val body = FormBody.Builder()
+            .apply { form.forEach { (name, value) -> add(name, value) } }
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .post(body)
+            .apply {
+                headers.forEach { (name, value) -> header(name, value) }
+            }
+            .build()
+        return execute(request)
+    }
 
     override suspend fun postMultipart(
         url: String,
         form: Map<String, String>,
         headers: Map<String, String>,
-    ): String =
-        withContext(Dispatchers.IO) {
-            val body = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .apply { form.forEach { (name, value) -> addFormDataPart(name, value) } }
-                .build()
-            val request = Request.Builder()
-                .url(url)
-                .post(body)
-                .apply {
-                    headers.forEach { (name, value) -> header(name, value) }
-                }
-                .build()
-
-            execute(request)
-        }
+    ): String {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .apply { form.forEach { (name, value) -> addFormDataPart(name, value) } }
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .post(body)
+            .apply {
+                headers.forEach { (name, value) -> header(name, value) }
+            }
+            .build()
+        return execute(request)
+    }
 
     override fun getCookie(name: String): String? =
         cookieStore.get(name)
 
     override fun clearCookies() {
-        cookieStore.clear()
+        cookieJar.clear()
     }
 
-    private fun execute(request: Request): String {
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw AnimeVostHttpException(response.code, response.message)
+    private suspend fun execute(request: Request): String = suspendCancellableCoroutine { continuation ->
+        val call = client.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(
+            object : Callback {
+                override fun onFailure(call: Call, exception: IOException) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(AnimeVostNetworkException(exception))
+                    }
                 }
-                return response.body?.string().orEmpty()
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val body = response.use {
+                            if (!it.isSuccessful) {
+                                throw AnimeVostHttpException(it.code, it.message)
+                            }
+                            it.body?.string().orEmpty()
+                        }
+                        if (continuation.isActive) continuation.resume(body)
+                    } catch (exception: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(exception)
+                    }
+                }
             }
-        } catch (exception: IOException) {
-            throw AnimeVostNetworkException(exception)
-        }
+        )
     }
 
     private companion object {
-        fun defaultClient(cookieStore: AnimeVostCookieStore): OkHttpClient =
+        fun defaultClient(cookieJar: CookieJar): OkHttpClient =
             OkHttpClient.Builder()
-                .cookieJar(AnimeVostCookieJar(cookieStore))
+                .cookieJar(cookieJar)
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .build()

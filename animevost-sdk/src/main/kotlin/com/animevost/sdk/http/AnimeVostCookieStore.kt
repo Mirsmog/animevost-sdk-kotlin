@@ -3,6 +3,7 @@ package com.animevost.sdk.http
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
+import java.util.concurrent.atomic.AtomicLong
 
 interface AnimeVostCookieStore {
     fun save(url: HttpUrl, cookies: List<Cookie>)
@@ -16,37 +17,35 @@ interface AnimeVostCookieStore {
 
 class InMemoryAnimeVostCookieStore : AnimeVostCookieStore {
     private val lock = Any()
-    private val cookiesByHost = linkedMapOf<String, MutableList<Cookie>>()
+    private val cookies = mutableListOf<Cookie>()
 
     override fun save(url: HttpUrl, cookies: List<Cookie>) {
         val now = System.currentTimeMillis()
         synchronized(lock) {
-            val hostCookies = cookiesByHost.getOrPut(url.host) { mutableListOf() }
             cookies.forEach { cookie ->
-                hostCookies.removeAll { it.name == cookie.name }
+                this.cookies.removeAll {
+                    it.name == cookie.name && it.domain == cookie.domain && it.path == cookie.path
+                }
                 if (cookie.expiresAt > now) {
-                    hostCookies += cookie
+                    this.cookies += cookie
                 }
             }
-            hostCookies.removeAll { it.expiresAt <= now }
+            this.cookies.removeAll { it.expiresAt <= now }
         }
     }
 
     override fun load(url: HttpUrl): List<Cookie> {
         val now = System.currentTimeMillis()
         synchronized(lock) {
-            val hostCookies = cookiesByHost[url.host] ?: return emptyList()
-            hostCookies.removeAll { it.expiresAt <= now }
-            return hostCookies.toList()
+            cookies.removeAll { it.expiresAt <= now }
+            return cookies.filter { it.matches(url) }
         }
     }
 
     override fun get(name: String): String? {
         val now = System.currentTimeMillis()
         synchronized(lock) {
-            return cookiesByHost.values
-                .asSequence()
-                .flatMap { it.asSequence() }
+            return cookies.asSequence()
                 .firstOrNull { it.name == name && it.expiresAt > now }
                 ?.value
                 ?.takeIf { it != "deleted" }
@@ -55,7 +54,7 @@ class InMemoryAnimeVostCookieStore : AnimeVostCookieStore {
 
     override fun clear() {
         synchronized(lock) {
-            cookiesByHost.clear()
+            cookies.clear()
         }
     }
 }
@@ -63,10 +62,24 @@ class InMemoryAnimeVostCookieStore : AnimeVostCookieStore {
 internal class AnimeVostCookieJar(
     private val store: AnimeVostCookieStore,
 ) : CookieJar {
+    private val sessionGeneration = AtomicLong()
+    private val requestGeneration = ThreadLocal<Long>()
+
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-        store.save(url, cookies)
+        val generationAtRequestStart = requestGeneration.get()
+        requestGeneration.remove()
+        if (generationAtRequestStart == null || generationAtRequestStart == sessionGeneration.get()) {
+            store.save(url, cookies)
+        }
     }
 
-    override fun loadForRequest(url: HttpUrl): List<Cookie> =
-        store.load(url)
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        requestGeneration.set(sessionGeneration.get())
+        return store.load(url)
+    }
+
+    fun clear() {
+        sessionGeneration.incrementAndGet()
+        store.clear()
+    }
 }
